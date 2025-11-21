@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 # gpsToKml.py
+#                               OR any other Gps File V
+#To run: python gpsToKml.py 2025_05_01__145019_gps_file.txt output.kml
 
 #This file attempts to cover the 1st requirement:
 #   Read GPS file
