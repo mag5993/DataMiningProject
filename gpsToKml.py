@@ -8,9 +8,9 @@
 #   Read GPS file
 #   Parse NMEA sentences ($GPRMC)
 #   Convert NMEA lat/lon
-#   Emit a simple KML path
+#   Emit a simple KML path, decorated with markers for stops and left turns
 
-
+# Authors: Dylan Thumann and Marissa Gomes
 
 import sys
 import math
