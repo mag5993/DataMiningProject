@@ -16,7 +16,9 @@ import sys
 import math
 import datetime
 
+import numpy as np
 
+## PART 1: read in the GPS file, parse the lines, and emit a KML file
 # TrackPoint object (lat, lon, speed, time)
 
 class TrackPoint:
@@ -124,7 +126,7 @@ def parse_nmea_file(filename):
 
 # Basic KML output
 
-def write_kml(points, output_file, altitude=3):
+def write_kml(stops, left_turns, points, output_file, altitude=3):
     
     # Writes ONLY the yellow path LineString.
 
@@ -142,6 +144,29 @@ def write_kml(points, output_file, altitude=3):
         kml.write('      </LineStyle>\n')
         kml.write('    </Style>\n')
 
+        # yellow marker
+        kml.write('    <Style id="yellowMarker">\n')
+        kml.write('      <IconStyle>\n')
+        kml.write('        <scale>0</scale>\n')
+        kml.write('      </IconStyle>\n')
+        kml.write('      <LabelStyle>\n')
+        kml.write('        <color>ff00ffff</color>\n')
+        kml.write('        <scale>1.5</scale>\n')
+        kml.write('      </LabelStyle>\n')
+        kml.write('    </Style>\n')
+
+        # red marker
+        kml.write('    <Style id="redMarker">\n')
+        kml.write('      <IconStyle>\n')
+        kml.write('        <scale>0</scale>\n')
+        kml.write('      </IconStyle>\n')
+        kml.write('      <LabelStyle>\n')
+        kml.write('        <color>ff0000ff</color>\n')
+        kml.write('        <scale>1.5</scale>\n')
+        kml.write('      </LabelStyle>\n')
+        kml.write('    </Style>\n')
+
+
         # Path placemark
         kml.write('    <Placemark>\n')
         kml.write('      <name>Route</name>\n')
@@ -157,9 +182,99 @@ def write_kml(points, output_file, altitude=3):
         kml.write('      </LineString>\n')
         kml.write('    </Placemark>\n')
 
+        
+        if (len(stops) != 0):
+            for s in stops:
+                kml.write('  <Placemark>\n')
+                kml.write(f'    <name>• </name>\n')
+                kml.write(f'    <styleUrl>#redMarker</styleUrl>\n')
+                kml.write('    <Point>\n')
+                kml.write('        <coordinates>\n')
+                kml.write(f'          {s[1]:.6f},{s[0]:.6f},{altitude}\n')
+                kml.write('        </coordinates>\n')
+                kml.write('    </Point>\n')
+                kml.write('  </Placemark>\n')
+
+
+                
+        if (len(left_turns) != 0):
+            for l in left_turns:
+                kml.write('  <Placemark>\n')
+                kml.write(f'    <name>• </name>\n')
+                kml.write(f'    <styleUrl>#yellowMarker</styleUrl>\n')
+                kml.write('    <Point>\n')
+                kml.write('        <coordinates>\n')
+                kml.write(f'          {l[1]:.6f},{l[0]:.6f},{altitude}\n')
+                kml.write('        </coordinates>\n')
+                kml.write('    </Point>\n')
+                kml.write('  </Placemark>\n')
+
+
+
+
         kml.write('  </Document>\n')
         kml.write('</kml>\n')
 
+## PART 2: decorate kml file
+
+# returns a tuple of lists holding coordinates: (stops, left_turns)
+def decorate(points):
+    print("decorating")
+    stops = [] # stores the actual stops
+    stop_sight = [] # holds the most recent group of stops
+    left_turns = [] # stores the actual left turns
+    left_sight = [] # holds the most recent group of left turns
+
+    for p in range(1, len(points) - 1):
+        # check for stops
+        minspeed = 5
+        if (points[p].speed_knots <= minspeed):
+            # add the coordinate to stop_sight
+            stop_sight.append((points[p].lat, points[p].lon))
+
+        elif (points[p].speed_knots > minspeed and len(stop_sight) != 0):
+            # convert to np array to calculate the mean coordinate
+            stop_sight_array = np.array(stop_sight)
+            mean_coordinate = tuple(np.mean(stop_sight_array, axis = 0))
+            # add to stops
+            stops.append(mean_coordinate)
+
+            #clear sight array for next stop
+            stop_sight.clear()
+        
+        # check for left turns
+        # vectors
+        a = points[p - 1]
+        axy = (a.lat, a.lon)
+        b = points[p]
+        bxy = (b.lat, b.lon)
+        c = points[p + 1]
+        cxy = (c.lat, c.lon)
+
+        left = calculateLeft(axy, bxy, cxy)
+
+        if (left):
+            # add to sight array
+            left_sight.append(bxy)
+        elif (left == False and len(left_sight) != 0):
+            # convert to np array to calculate the mean coordinate
+            left_sight_array = np.array(left_sight)
+            mean_coordinate = tuple(np.mean(left_sight_array, axis = 0))
+            # add coordinate
+            left_turns.append(mean_coordinate)
+            left_sight.clear()
+
+    return stops, left_turns
+            
+
+# calculates left turns, return boolean
+def calculateLeft(a, b, c, tolerance = 1e-9):
+    ux = float(b[0]) - float(a[0])
+    uy = float(b[1]) - float(a[1])
+    vx = float(c[0]) - float(b[0])
+    vy = float(c[1]) - float(b[1])   
+    wedge = ux * vy - uy * vx
+    return wedge > tolerance
 
 
 # Main program 
@@ -176,8 +291,10 @@ def main():
     if not points:
         print("Error: No valid points found.")
         sys.exit(1)
+    
+    stops, left_turns = decorate(points)
 
-    write_kml(points, output_file)
+    write_kml(stops, left_turns, points, output_file)
     print(f"Requirement 1 KML created: {output_file}")
 
 
