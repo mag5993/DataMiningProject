@@ -122,7 +122,83 @@ def parse_nmea_file(filename):
 
     return points
 
+def checkStraight(a, b, c, tolerance = pow(10, -9.5), max_angle_cos_threshold = 0.999):
+    ux = float(b[0]) - float(a[0])
+    uy = float(b[1]) - float(a[1])
+    vx = float(c[0]) - float(b[0])
+    vy = float(c[1]) - float(b[1])   
 
+    # magnitudes
+    mag_u_sq = ux*ux + uy*uy
+    mag_v_sq = vx*vx + vy*vy
+    
+    # if either vectors
+    if mag_u_sq < tolerance or mag_v_sq < tolerance:
+        return False
+    
+    # check colinearity
+    wedge = ux * vy - uy * vx
+    is_collinear = abs(wedge) < tolerance
+
+    # check tight direction
+    dot_product = ux * vx + uy * vy
+
+    # cosine of angle between vectors
+    mag_u = math.sqrt(mag_u_sq)
+    mag_v = math.sqrt(mag_v_sq)
+
+    # dot = cosine of angle
+    cos_theta = dot_product / (mag_u * mag_v)
+
+    # check if angle is very small
+    is_tightly_aligned = cos_theta > max_angle_cos_threshold
+    
+    return is_collinear and is_tightly_aligned
+
+# performs data cleaning on the points array and returns it
+def clean(points):
+    start_parked = 0
+    clean_points = []
+    p_length = len(points) - 1
+    minspeed = 5
+
+    # ignore finishing points where car is parked
+    for p in range(p_length, -1, -1):
+        if (points[p].speed_knots <= minspeed):
+            points.pop() # pop the last element
+        else:
+            break
+
+    p_length = len(points) - 1
+    
+    
+    for p in range(1, len(points) - 1):
+        # ignore starting points where car is parked
+        if (points[p].speed_knots <= minspeed and start_parked == 0):
+            continue
+        start_parked = 1
+        prev_p = points[p - 1]
+
+        # checking if the points are near each other (not halfway across the world)
+        if (abs(prev_p.lat - points[p].lat) > 0.25 or abs(prev_p.lon - points[p].lon) > 0.25):
+            continue
+
+        # checking if the line is straight
+        a = points[p - 1]
+        axy = (a.lat, a.lon)
+        b = points[p]
+        bxy = (b.lat, b.lon)
+        c = points[p + 1]
+        cxy = (c.lat, c.lon)
+
+        straight = checkStraight(axy, bxy, cxy)
+        if (straight):
+            continue
+
+        # last step = add to clean points array
+        clean_points.append(points[p])
+    
+    return clean_points
 
 # Basic KML output
 
@@ -272,7 +348,7 @@ def calculateLeft(a, b, c, tolerance = 1e-9):
     ux = float(b[0]) - float(a[0])
     uy = float(b[1]) - float(a[1])
     vx = float(c[0]) - float(b[0])
-    vy = float(c[1]) - float(b[1])   
+    vy = float(c[1]) - float(b[1])  
     wedge = ux * vy - uy * vx
     return wedge > tolerance
 
@@ -291,6 +367,8 @@ def main():
     if not points:
         print("Error: No valid points found.")
         sys.exit(1)
+    
+    points = clean(points)
     
     stops, left_turns = decorate(points)
 
