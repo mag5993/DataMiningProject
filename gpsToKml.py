@@ -159,45 +159,41 @@ def checkStraight(a, b, c, tolerance = pow(10, -9.5), max_angle_cos_threshold = 
 def clean(points):
     start_parked = 0
     clean_points = []
-    p_length = len(points) - 1
     minspeed = 5
 
-    # ignore finishing points where car is parked
-    for p in range(p_length, -1, -1):
-        if (points[p].speed_knots <= minspeed):
-            points.pop() # pop the last element
-        else:
-            break
+    if not points:
+        return []
 
-    p_length = len(points) - 1
-    
-    
-    for p in range(1, len(points) - 1):
+    # ---- Remove parked points at the end ----
+    end_idx = len(points) - 1
+    while end_idx >= 0 and points[end_idx].speed_knots <= minspeed:
+        end_idx -= 1
+
+    # nothing left?
+    if end_idx <= 0:
+        return []
+
+    # ---- Walk from start to end_idx, drop parked-before-start+big jumps ----
+    last_kept = None
+
+    for p in range(0, end_idx + 1):
+        pt = points[p]
+
         # ignore starting points where car is parked
-        if (points[p].speed_knots <= minspeed and start_parked == 0):
+        if pt.speed_knots <= minspeed and start_parked == 0:
             continue
         start_parked = 1
-        prev_p = points[p - 1]
 
-        # checking if the points are near each other (not halfway across the world)
-        if (abs(prev_p.lat - points[p].lat) > 0.25 or abs(prev_p.lon - points[p].lon) > 0.25):
-            continue
+        # if we have a previous kept point, check for crazy jumps
+        if last_kept is not None:
+            if (abs(last_kept.lat - pt.lat) > 0.25 or
+                abs(last_kept.lon - pt.lon) > 0.25):
+                # skip this as junk
+                continue
 
-        # checking if the line is straight
-        a = points[p - 1]
-        axy = (a.lat, a.lon)
-        b = points[p]
-        bxy = (b.lat, b.lon)
-        c = points[p + 1]
-        cxy = (c.lat, c.lon)
+        clean_points.append(pt)
+        last_kept = pt
 
-        straight = checkStraight(axy, bxy, cxy)
-        if (straight):
-            continue
-
-        # last step = add to clean points array
-        clean_points.append(points[p])
-    
     return clean_points
 
 # Basic KML output
@@ -220,27 +216,34 @@ def write_kml(stops, left_turns, points, output_file, altitude=3):
         kml.write('      </LineStyle>\n')
         kml.write('    </Style>\n')
 
-        # yellow marker
+        # yellow marker (left turns)
         kml.write('    <Style id="yellowMarker">\n')
         kml.write('      <IconStyle>\n')
-        kml.write('        <scale>0</scale>\n')
+        kml.write('        <scale>1.2</scale>\n')
+        kml.write('        <Icon>\n')
+        kml.write('          <href>http://maps.google.com/mapfiles/kml/paddle/ylw-circle.png</href>\n')
+        kml.write('        </Icon>\n')
         kml.write('      </IconStyle>\n')
         kml.write('      <LabelStyle>\n')
         kml.write('        <color>ff00ffff</color>\n')
-        kml.write('        <scale>1.5</scale>\n')
+        kml.write('        <scale>1.2</scale>\n')
         kml.write('      </LabelStyle>\n')
         kml.write('    </Style>\n')
 
-        # red marker
+        # red marker (stops)
         kml.write('    <Style id="redMarker">\n')
         kml.write('      <IconStyle>\n')
-        kml.write('        <scale>0</scale>\n')
+        kml.write('        <scale>1.2</scale>\n')
+        kml.write('        <Icon>\n')
+        kml.write('          <href>http://maps.google.com/mapfiles/kml/paddle/red-circle.png</href>\n')
+        kml.write('        </Icon>\n')
         kml.write('      </IconStyle>\n')
         kml.write('      <LabelStyle>\n')
         kml.write('        <color>ff0000ff</color>\n')
-        kml.write('        <scale>1.5</scale>\n')
+        kml.write('        <scale>1.2</scale>\n')
         kml.write('      </LabelStyle>\n')
         kml.write('    </Style>\n')
+
 
 
         # Path placemark
@@ -295,63 +298,126 @@ def write_kml(stops, left_turns, points, output_file, altitude=3):
 
 # returns a tuple of lists holding coordinates: (stops, left_turns)
 def decorate(points):
-    print("decorating")
-    stops = [] # stores the actual stops
-    stop_sight = [] # holds the most recent group of stops
-    left_turns = [] # stores the actual left turns
-    left_sight = [] # holds the most recent group of left turns
+    print("decorating, points after clean():", len(points))
+    stops = []
+    stop_sight = []
+    left_turns = []
+    left_sight = []
 
-    for p in range(1, len(points) - 1):
-        # check for stops
-        minspeed = 5
-        if (points[p].speed_knots <= minspeed):
-            # add the coordinate to stop_sight
-            stop_sight.append((points[p].lat, points[p].lon))
+    minspeed = 5          # speed threshold for "stopped"
+    turn_min_speed = 3    # consider turns even at slow rlling speed
 
-        elif (points[p].speed_knots > minspeed and len(stop_sight) != 0):
-            # convert to np array to calculate the mean coordinate
+    raw_left_count = 0
+
+    n = len(points)
+    if n < 5:
+        return [], []
+
+    for i in range(2, n - 2):
+        b = points[i]
+
+        # for stop detection
+        if b.speed_knots <= minspeed:
+            stop_sight.append((b.lat, b.lon))
+        elif b.speed_knots > minspeed and len(stop_sight) != 0:
             stop_sight_array = np.array(stop_sight)
-            mean_coordinate = tuple(np.mean(stop_sight_array, axis = 0))
-            # add to stops
-            stops.append(mean_coordinate)
-
-            #clear sight array for next stop
+            mean_lat, mean_lon = np.mean(stop_sight_array, axis=0)
+            stops.append((mean_lat, mean_lon))
             stop_sight.clear()
-        
-        # check for left turns
-        # vectors
-        a = points[p - 1]
-        axy = (a.lat, a.lon)
-        b = points[p]
-        bxy = (b.lat, b.lon)
-        c = points[p + 1]
-        cxy = (c.lat, c.lon)
 
-        left = calculateLeft(axy, bxy, cxy)
+        # for left turn
+        a = points[i - 2]
+        c = points[i + 2]
 
-        if (left):
-            # add to sight array
-            left_sight.append(bxy)
-        elif (left == False and len(left_sight) != 0):
-            # convert to np array to calculate the mean coordinate
+        if b.speed_knots < turn_min_speed:
+            left = False
+        else:
+            axy = (a.lon, a.lat)
+            bxy = (b.lon, b.lat)
+            cxy = (c.lon, c.lat)
+            left = calculateLeft(axy, bxy, cxy)
+
+        if left:
+            raw_left_count += 1
+            left_sight.append((b.lat, b.lon))
+        elif not left and len(left_sight) != 0:
             left_sight_array = np.array(left_sight)
-            mean_coordinate = tuple(np.mean(left_sight_array, axis = 0))
-            # add coordinate
-            left_turns.append(mean_coordinate)
+            mean_lat, mean_lon = np.mean(left_sight_array, axis=0)
+            left_turns.append((mean_lat, mean_lon))
             left_sight.clear()
 
+    # Flush any remaining stop cluster
+    if len(stop_sight) != 0:
+        stop_sight_array = np.array(stop_sight)
+        mean_lat, mean_lon = np.mean(stop_sight_array, axis=0)
+        stops.append((mean_lat, mean_lon))
+
+    # Flush any remaining left-turn cluster
+    if len(left_sight) != 0:
+        left_sight_array = np.array(left_sight)
+        mean_lat, mean_lon = np.mean(left_sight_array, axis=0)
+        left_turns.append((mean_lat, mean_lon))
+
     return stops, left_turns
-            
+
+
+   
 
 # calculates left turns, return boolean
-def calculateLeft(a, b, c, tolerance = 1e-9):
+def calculateLeft(a, b, c, min_sin=0.3, min_segment_length=0.00005):
+
     ux = float(b[0]) - float(a[0])
     uy = float(b[1]) - float(a[1])
     vx = float(c[0]) - float(b[0])
-    vy = float(c[1]) - float(b[1])  
-    wedge = ux * vy - uy * vx
-    return wedge > tolerance
+    vy = float(c[1]) - float(b[1])
 
+    len_u = math.hypot(ux, uy)
+    len_v = math.hypot(vx, vy)
+
+    # ignore very small moves
+    if len_u < min_segment_length or len_v < min_segment_length:
+        return False
+
+    cross = ux * vy - uy * vx
+    cross_norm = cross / (len_u * len_v)
+
+    # left turn if positive and large enough
+    return cross_norm > min_sin
+
+
+
+def moving_duration(points):
+    if not points or len(points) < 2:
+        return 0
+    moving_duration = 0
+
+    for p in range(1, len(points)):
+        a = points[p - 1]
+        b = points[p]
+
+        if a.timestamp is None or b.timestamp is None:
+            continue
+        elif a.speed_knots > 2 or b.speed_knots > 2:
+            difference = (b.timestamp - a.timestamp).total_seconds()
+            moving_duration += difference
+
+
+    hours, remainder = divmod(moving_duration, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{int(hours):02}:{int(minutes):02}:{int(secs):02}"
+
+def total_duration(points):
+    if not points or len(points) < 2:
+        return 0
+
+    start = points[0].timestamp
+    end = points[-1].timestamp
+
+    duration = (end - start).total_seconds()
+
+    hours, remainder = divmod(duration, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{int(hours):02}:{int(minutes):02}:{int(secs):02}"
 
 # Main program 
 
@@ -373,6 +439,8 @@ def main():
     stops, left_turns = decorate(points)
 
     write_kml(stops, left_turns, points, output_file)
+    print("Moving duration of journey: ", moving_duration(points))
+    print("Total duration of journey: ", total_duration(points))
     print(f"Requirement 1 KML created: {output_file}")
 
 
