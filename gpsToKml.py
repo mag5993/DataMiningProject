@@ -164,7 +164,7 @@ def clean(points):
     if not points:
         return []
 
-    # ---- Remove parked points at the end ----
+    # Remove parked points at the end
     end_idx = len(points) - 1
     while end_idx >= 0 and points[end_idx].speed_knots <= minspeed:
         end_idx -= 1
@@ -173,7 +173,7 @@ def clean(points):
     if end_idx <= 0:
         return []
 
-    # ---- Walk from start to end_idx, drop parked-before-start+big jumps ----
+    # Walk from start to end_idx, drop parked-before-start+big jumps
     last_kept = None
 
     for p in range(0, end_idx + 1):
@@ -188,7 +188,17 @@ def clean(points):
         if last_kept is not None:
             if (abs(last_kept.lat - pt.lat) > 0.25 or
                 abs(last_kept.lon - pt.lon) > 0.25):
-                # skip this as junk
+                continue
+        if last_kept is not None and p < end_idx:
+            a = points[p - 1] 
+            axy = (a.lat, a.lon) 
+            b = points[p] 
+            bxy = (b.lat, b.lon) 
+            c = points[p + 1] 
+            cxy = (c.lat, c.lon) 
+            straight = checkStraight(axy, bxy, cxy) 
+            
+            if (straight): 
                 continue
 
         clean_points.append(pt)
